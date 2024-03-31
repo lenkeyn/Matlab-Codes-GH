@@ -1,14 +1,9 @@
-function sData = CalcBehavAC(sData,BinNu,IsOpto,SensitivityOpto) 
+function sData = CalcBehavFixedRew(sData,BinNu,IsOpto) 
 
 % calculate LV data from TDMS data and save it to LVDATA file. From 2018.11.19. calculate lapstart when Water Valve opens (photodiode signal is not reliable)
 % before this file use : sData.daqdata = loadTDMSdataNoriMateLV;
 
-%%% SET PARAMETERS:
-% BinNu = 60; % Bin number ; I calculated with 60 bins in all recordings
-% IsOpto = 0; % 0 or 1; Is this session an optically stimulated? ; These recording are NOT optically stimulated
-% SensitivityOpto = 0; % between 0 - 100; Detection sensitivity for the optical stimulation. Since these recordings are not stimulated, it does not matter what is the value 
-
-LVDATA = struct; % temporary struct for data
+LVDATA = struct;
 LVDATA.stats = struct;
 LVDATA.BinNu = BinNu;
 LVDATA.BinSize = 50*pi/BinNu;
@@ -17,37 +12,21 @@ LVDATA.BinSize = 50*pi/BinNu;
 % fileID
 LVDATA.FileID = sData.sessionInfo.fileID;
 
-
-% Calculate Trial number (TRNu) and RewardStart array (array of zeros and ones, one when lap starts)
-% Note: having 3 khz sampling, if the mouse run 100 cm/s, the photodiode signal (2cm black part) takes 20 ms, it is 60 samples. 
-PhotoDiode = sData.daqdata.wheelDiode; % original analog data from tdms file
-if any(PhotoDiode(:) > 2.0)
-    PhotoDiode(PhotoDiode < 1.5) = 0; % binarized to zeros and ones
-    PhotoDiode(PhotoDiode >= 1.5) = 1;
-    PdZeroOne = diff(PhotoDiode) == 1; % search when PD signal change from zero to one - potential lap starts (and arteficial back-and-forth as well)
-else
-    PdZeroOne = PhotoDiode;
-end
-PotRewardStartIndex = find(PdZeroOne); % potential lap starts
-RewardStartIndexPre = NaN(numel(PotRewardStartIndex),1); % real lap-starts
-LapCounter = 0;
-for i=2:1:numel(PotRewardStartIndex)  % the first 0-1 PD signal assumed to be real (but does not really matter if not)
-    if sData.daqdata.distanceCm(PotRewardStartIndex(i)) - sData.daqdata.distanceCm(PotRewardStartIndex(i-1)) > 150 % lapstart if photodiode signal is 1 and animal runned at least 150 cm before previous reward
-        LapCounter = LapCounter + 1; % sum up already runned laps
-        RewardStartIndexPre(LapCounter) = PotRewardStartIndex(i);
-    end
-end
-LVDATA.RewardStartIndex = RewardStartIndexPre(~isnan(RewardStartIndexPre));
-LVDATA.stats.TRNuFull = LapCounter;
-LVDATA.TRNu = LapCounter;
-
-
-%{
 % LapStart at WaterGiven
-LVDATA.RewardStartIndex = find(diff(sData.daqdata.waterValve) == 1);
-LVDATA.TRNu = sum(LVDATA.RewardStartIndex)-2;
-LVDATA.stats.TRNuFull = LVDATA.TRNu;
-%}
+waterValveOpen = zeros(numel(sData.daqdata.waterValve),1);
+for i = 1001:1:numel(sData.daqdata.waterValve)
+    if sData.daqdata.waterValve(i) == 1  && sum(sData.daqdata.waterValve(i-1000:i-1,1)) == 0
+        waterValveOpen(i,1) = 1;
+    end
+end    
+LVDATA.RewardStartIndex = find(waterValveOpen == 1);
+LapLengthPre = sData.daqdata.distanceCm(LVDATA.RewardStartIndex);
+LapLength = diff(LapLengthPre);
+MeanLapLength = mean(LapLength);
+LVDATA.stats.TRNuFull = numel(LapLength);
+LVDATA.TRNu = numel(LapLength);
+
+
 
 % Calculate number of frames = number of scans
 %%% generate fake frame signal
@@ -75,14 +54,13 @@ LVDATA.FrameSignalRate = 1/((mean(diff(FrameStartIndex)))/LVDATA.DaqSamplingRate
 % cut LV recording before first reward and frame signals
 Distance = sData.daqdata.distanceCm;
 %Distance(1:FrameStartIndex(1)-1) = NaN;
-LVDATA.Start = min(LVDATA.RewardStartIndex(LVDATA.RewardStartIndex > FrameStartIndex(1)));
-Distance(1:LVDATA.Start-1) = NaN;
+Start = min(LVDATA.RewardStartIndex(LVDATA.RewardStartIndex > FrameStartIndex(1)));
+Distance(1:Start-1) = NaN;
 
 % Aim: Calculate Absolute Distance (zero at reward point) from cumulative distance data, downsaple to imaging sampling rate, FrameSignalRate
 % Calculate when rewards start, 
-DistSubtract = Distance(LVDATA.RewardStartIndex); % cumulative distances at lap starts (to be subtracted from cumDist data)
-LVDATA.stats.LapLengthCm = nanmean(diff(DistSubtract)); % mean length of laps, should be equal to Circumference
-LVDATA.stats.SDLapLengthCm = nanstd(diff(DistSubtract));
+LVDATA.stats.LapLengthCm = MeanLapLength; % mean length of laps, should be equal to Circumference
+LVDATA.stats.SDLapLengthCm = nanstd(LapLength);
 % inform the user
 msgbox(sprintf('Full trial number is: %d. Mean LapLength: %g, Stdev LapLength: %g. Number of frames catched by LV frame signal: %g. Imaging sampling frequency is %g Hz.',LVDATA.stats.TRNuFull,LVDATA.stats.LapLengthCm,LVDATA.stats.SDLapLengthCm,LVDATA.FrameNu,LVDATA.FrameSignalRate));
 
@@ -96,7 +74,7 @@ for i = LVDATA.RewardStartIndex(1):1:numel(sData.daqdata.distanceCm)
             break
         end
     end
-    AbsDist(i) = Distance(i) - DistSubtract(LapCounter);
+    AbsDist(i) = Distance(i) - LapLengthPre(LapCounter);
 end
 % Downsample distance dadta to imaging frequency, consider only full laps with frame signal
 LVDATA.AbsDistDS = AbsDist(FrameStartIndex);
@@ -114,7 +92,7 @@ end
 
 
 % Velocity calculation
-Circumfer = 157; %pi*50; % Wheel circumference
+Circumfer = pi*50; % Wheel circumference
 LVDATA.stats.TheoreticLapLengthCm = Circumfer;
 MovMean = 7 ; % moving window for smoothing
 %%% calculation nonDS Velocity data
@@ -315,7 +293,7 @@ if IsOpto == 0
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
     
-    if sum(sData.daqdata.optoSignal)>0
+    if sum(sData.daqdata.optoSignal)~=0
         LVDATA = optoStimCalc(LVDATA,sData);
         sData.behavior.opto.IsOptoSession = 2;
     end
@@ -323,9 +301,8 @@ if IsOpto == 0
 elseif IsOpto == 1 
 
     % TRIAL SORTING 
-    LVDATA = OptoTrialSorting2(LVDATA,sData,SensitivityOpto);
-    %SensitivityOpto = 100; %% If there was light in the (1/SensitivityOpto)percentage during the trial it should be considered as light-on trial. 1/100 high sens, 1/10 low
-    
+    LVDATA = OptoTrialSorting2(LVDATA,sData);
+
     %%% PLOT average lick trial-types
     figure('Color','white'); 
     Xaxis = 1:Xstep:XaxisEnd;
@@ -337,7 +314,7 @@ elseif IsOpto == 1
     line([157+RewardZoneLength 157+RewardZoneLength],[0 1.5],'Color','black','LineStyle','--');
     xlabel('Position on wheel (cm)');
     ylabel('Licks/cm');
-    legend('Laser-Off','Laser-On','After-Laser','Location','north');
+    legend('Light-Off','Light-On','After-Light','Location','north');
     FileName = strcat('LickSum-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
@@ -355,8 +332,8 @@ elseif IsOpto == 1
     hold on
     line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
     xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-Off'));
-    FileName = strcat('LickHeat-LaserOff-',LVDATA.FileID);
+    title(strcat(LVDATA.FileID,'-Light-Off'));
+    FileName = strcat('LickHeat-LighOff-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
@@ -372,8 +349,8 @@ elseif IsOpto == 1
     hold on
     line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
     xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-On'));
-    FileName = strcat('LickHeat-LaserOn-',LVDATA.FileID);
+    title(strcat(LVDATA.FileID,'-Light-On'));
+    FileName = strcat('LickHeat-LighOn-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
@@ -389,8 +366,8 @@ elseif IsOpto == 1
     hold on
     line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
     xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-AfterLaser'));
-    FileName = strcat('LickHeat-AfterLaser-',LVDATA.FileID);
+    title(strcat(LVDATA.FileID,'-AfterLight'));
+    FileName = strcat('LickHeat-AfterLigh-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
@@ -407,14 +384,14 @@ elseif IsOpto == 1
     line([157+RewardZoneLength 157+RewardZoneLength],[0 VMax],'Color','black','LineStyle','--');
     xlabel('Position on wheel (cm)');
     ylabel('Velocity (cm/s)');
-    legend('Laser-Off','Laser-On','After Laser','Location','South');
+    legend('Light-Off','Light-On','After Light','Location','South');
     FileName = strcat('VeloSum-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
     %%% PLOT Velo Heatmaps
     % LIGHT-OFF
-    plotdata = LVDATA.Opto.VeloMatrix_LightOff(:,1:BinNu);
+    plotdata = LVDATA.Opto.VeloMatrix_LightOff;
     TRNuPlot = size(plotdata,1);
     figure('Color','white'); 
     imagesc(1:Xstep:BinNu * LVDATA.BinSize,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
@@ -422,13 +399,13 @@ elseif IsOpto == 1
     j.Label.String = 'Velocity (cm/s)'; 
     j.Label.FontSize = 11; j.TickDirection = 'out'; 
     xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-Off'));
-    FileName = strcat('VeloHeat-LaserOff-',LVDATA.FileID);
+    title(strcat(LVDATA.FileID,'-Light-Off'));
+    FileName = strcat('VeloHeat-LighOff-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
     % LIGHT-ON
-    plotdata = LVDATA.Opto.VeloMatrix_LightOn(:,1:BinNu);
+    plotdata = LVDATA.Opto.VeloMatrix_LightOn;
     TRNuPlot = size(plotdata,1);
     figure('Color','white'); 
     imagesc(1:Xstep:BinNu * LVDATA.BinSize,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
@@ -436,13 +413,13 @@ elseif IsOpto == 1
     j.Label.String = 'Velocity (cm/s)'; 
     j.Label.FontSize = 11; j.TickDirection = 'out'; 
     xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-On'));
-    FileName = strcat('VeloHeat-LaserOn-',LVDATA.FileID);
+    title(strcat(LVDATA.FileID,'-Light-On'));
+    FileName = strcat('VeloHeat-LighOn-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
     % AFTER-LIGHT
-    plotdata = LVDATA.Opto.VeloMatrix_AfterLight(:,1:BinNu);
+    plotdata = LVDATA.Opto.VeloMatrix_AfterLight;
     TRNuPlot = size(plotdata,1);
     figure('Color','white'); 
     imagesc(1:Xstep:BinNu * LVDATA.BinSize,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
@@ -450,8 +427,8 @@ elseif IsOpto == 1
     j.Label.String = 'Velocity (cm/s)'; 
     j.Label.FontSize = 11; j.TickDirection = 'out'; 
     xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-AfterLaser'));
-    FileName = strcat('VeloHeat-AfterLaser-',LVDATA.FileID);
+    title(strcat(LVDATA.FileID,'-AfterLight'));
+    FileName = strcat('VeloHeat-AfterLigh-',LVDATA.FileID);
     savefig(fullfile(savePath,FileName));
     saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
@@ -503,12 +480,14 @@ sData.behavior.binning.meanLickPerCmBinned = LVDATA.MeanLickCm;
 sData.behavior.opto = LVDATA.Opto;
 sData.behavior.opto.IsOptoSession = IsOpto;
 
-% calculate behavioral performnace
-if LVDATA.TRNu > 30
-    sData = behavPerfomance(sData);
-end
-
 % Save file to same path where LV files can be found 
 save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.fileID,'_sData.mat')),'sData');
 
 end
+
+for i= 8:1:90
+
+figure(); plot(sData.behavior.binning.lickPerCmBinned(i,:)); hold on;
+plot(sData.behavior.opto.OptoStimOnMatrix(i,:)); 
+end
+

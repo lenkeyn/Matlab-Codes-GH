@@ -4,8 +4,10 @@ function sData = motionCorrVector(sData,filePath,savePath) % filePath: raw data 
 
 % open motion correction / imreg_variables / _frameShifts_ch1.mat
 str1 = filePath;
-str2 = regexprep(str1,'roisignals\','','ignorecase');
-str3 = strcat(str2,'imreg_variables\');
+str2 = regexprep(str1,'roisignals(\w*)','','ignorecase');
+%str21 = str2(1:end-9);
+str3 = strcat(str2,'imreg_variables\'); % str21 instead of str2 older
+%str3 = strcat(str21,'imreg_variables\'); % 
 List = dir(fullfile(str3,'*_frameShifts_ch1.mat'));
 load(fullfile(str3,List.name)); %#ok<LOAD>
 

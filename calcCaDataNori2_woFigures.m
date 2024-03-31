@@ -1,11 +1,8 @@
-function sData = calcCaDataNoriShort(sData,VelMin,laserPower,waveLength,fovCoord,pmtGainGreen,IsDeconv,gol) 
+function sData = calcCaDataNori2_woFigures(sData,VelMin,IsDeconv,gol) 
 %use this function to process Ca-imaging data 
 
 %%% TO BE SET:  
 % VelMin = 0.01; % minimum velocity. Below this, Ca-activity will be discarded
-% laserPower,waveLength,fovCoord,pmtGainGreen : parameters of 2P recording
-% IsDeconv: 0 if does not calculate dencovolved data, 1 if calculates it
-% gol: goal oriented task, cue-position parameters
 
 %%% recruiting Ca preprocessed data from ROIMANAGER: 
 msgbox('Open dff file');
@@ -17,8 +14,8 @@ nBin = sData.behavior.meta.nBins;
 nTrials = sData.behavior.wheelLapImaging;
 %FrameRate = sData.behavior.meta.imagingSamplingRate;
 
-sData.imdata = struct;
-sData.imdata.meta = struct;
+%sData.imdata = struct;
+%sData.imdata.meta = struct;
 sData.imdata.binned = struct;
 sData.imdata.binned.VelMin = VelMin;
 sData.imdata.binned.rewardPos = gol;
@@ -62,11 +59,18 @@ if ~isempty(List)
 end
 
 % saving folder
-mkdir(sData.sessionInfo.savePath,'Imaging');
+% mkdir(sData.sessionInfo.savePath,'Imaging');
+%{
 mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiAct');
-mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned');
-mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned-SR');
+mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned-dFF');
+if IsDeconv > 0
+    mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned-deconv');
+    mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned-cumSpikes');
+    mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned-iFreq');
+end
+%}
 
+%{
 % load rois metadata
 List = dir(fullfile(filePath,'*_2p_stack_reg_ch1_001_rois.mat'));
 load(fullfile(filePath,List.name));
@@ -99,6 +103,7 @@ sData.imdata.meta.waveLength =  waveLength;         % nm
 sData.imdata.meta.fovCoordinates = fovCoord;        % from center of window, AP ML (0 -500 means imaging at -2.2 mm left hemisphere)
 sData.imdata.meta.pmtGain(1,1) = pmtGainGreen;
 
+
 %%% CONTROL. Compare frame signal in LV and number of frames in 2P recording:
 if nSamples ~= sData.behavior.details.nFrames  
    msgbox(sprintf('Number of recorded by LV frames and imaged frames is not equal: %d vs %d',sData.behavior.details.nFrames,nSamples));
@@ -121,7 +126,6 @@ for i = 1:1:nROIs
 end
 sData.imdata.roiSignals(2).dff_LPlight = single(dff_lowpassLight);
 % plot slightly filtered transients
-%nROIOnFig = round((nROIs/3),-1)-1; % how many ROIs to see on the fig (best to set to X if rem(X/5)=1 , e.g. 19, 49, ...)
 nROIOnFig = 10;
 plotdata = dff_lowpassLight(:,1:nSamples);
 % plot 10 ROIs to one fig
@@ -129,36 +133,9 @@ plotMultipleROIdFFNormAbsDist(plotdata,sData.behavior.meta.imagingSamplingRate,n
 %plot all rois into one fig
 plotMultipleROIdFFNormAbsDist(plotdata,sData.behavior.meta.imagingSamplingRate,nROIs,sData.behavior.wheelPosDsMonIncr,sData.behavior.lickDs,savePath,'ALL-NormROIsdFF-LPlight');  %sData.behavior.opto.LightOnSignalDS
 close all;
-
+%}
 % save temp
 save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.fileID,'_sData.mat')),'sData');
-
-% calculating arbritary firing frequency
-% calculates event weighted frequency of events that are separated by 0s
-
-if IsDeconv >= 1
-    iFrequencyNorm = NaN(nROIs,nSamples); % create empty array for data  
-    for i=287:1:nROIs
-        signal = sData.imdata.roiSignals(2).deconv(i,1:nSamples);
-        if max(signal) == 0
-           continue 
-        end
-        iFrequency = nan(size(signal));
-        eventPos = find(signal ~= 0);
-        events = signal(eventPos);                          
-        freques = sData.imdata.meta.fps./diff(eventPos);
-        freques = [freques 0]; % add 0 as the last datapoint because frequency can only be calculated between two events 
-        iFrequency(signal ~= 0) = freques.*events;          % fill data in the correct positions 
-        iFrequency(1) = 0;                                  % add 0 as the first value for the fillmissing function
-        iFrequency = fillmissing(iFrequency,'previous'); 
-        iFrequencyNorm(i,1:nSamples) = iFrequency./min(signal(signal>0));
-    end
-    sData.imdata.roiSignals(2).iFrequencyNorm = single(iFrequencyNorm);
-end
-
-% save temp
-save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.fileID,'_sData.mat')),'sData');
-
 
 %%% CREATE A NEW MATRIX CONTAINING REAL (all) VELOCITY DATA , same size as SampleInBin Matrix
 SampleInBinVelo = NaN(size(sData.behavior.binning.samplesInBinIndex));
@@ -168,9 +145,9 @@ for i = 1:1:(size(sData.behavior.binning.samplesInBinIndex,1))-1   % -1    find 
 end
 
 % CREATE MATRIX for Velo-limited data based on velocity limit (discarded data will be represented by -1)
-SampleInBinLim = sData.behavior.binning.samplesInBinIndex; % CADATA.SampleInBinLim = CADATA.SampleInBin;
+SampleInBinLim = sData.behavior.binning.samplesInBinIndex; 
 % substitute indexes with low velo data with -1 : 
-SampleInBinLim(SampleInBinVelo < VelMin) = -1; % CADATA.SampleInBinLim(CADATA.SampleInBinVelo < VelMin) = -1;
+SampleInBinLim(SampleInBinVelo < VelMin) = -1; 
 
 % PUT SAMPLE INDEXES (Velo limited) into multi-dimension matrix. 1st dim: trials, then columns are bins, rows contain samples in that trial and bin. 
 MaxSamplesinBin = max(sData.behavior.binning.samplesSpentInBin(:)); % how many rows needed maximum in matrix (what was max time (samples) spend in a bin)   , MaxSamplesinBin = max(CADATA.SampleSpentInBin(:));
@@ -184,34 +161,38 @@ sData.imdata.VeloInBin = NaN(nTrials-1,nBin); % mean real velo
 sData.imdata.VeloLimInBin = NaN(nTrials-1,nBin); % mean limited velo
 for i = 1:1:nTrials-1
    for j = 1:1:nBin
-      SampleInd = sData.behavior.binning.enterIntoBinIndex(i,j); % get sample index when enter into a bin  % SampleInd = CADATA.EnterIntoBinSampleInd(i,j); 
+      SampleInd = sData.behavior.binning.enterIntoBinIndex(i,j); % get sample index when enter into a bin   
       if isnan(SampleInd)
          break 
       end
-      SpentInBin = sData.behavior.binning.leaveBinIndex(i,j) - sData.behavior.binning.enterIntoBinIndex(i,j)+ 1 ; % get how many samples spent in that bin  % SpentInBin = CADATA.SampleSpentInBin(i,j);
+      SpentInBin = sData.behavior.binning.leaveBinIndex(i,j) - sData.behavior.binning.enterIntoBinIndex(i,j)+ 1 ; % get how many samples spent in that bin  
+      if SpentInBin == 0 % in some cases animal run so fast, that one sample's data has to be shared 
+          SpentInBin = 1;
+      end
       for k = 1:1:SpentInBin
           if SampleInBinLim(SampleInd+k-1,j) > 0 % limited values were set to -1, I do not want to contain them
              MMSamplesLim{i}(k,j) = SampleInd + k - 1; % limited samples
-             MMVeloLim{i}(k,j) = SampleInBinVelo((SampleInd+k-1),j); % use only limited velo data  % CADATA.MMVeloLim{i}(k,j) = CADATA.SampleInBinVelo((SampleInd+k-1),j);
+             MMVeloLim{i}(k,j) = SampleInBinVelo((SampleInd+k-1),j); % use only limited velo data  
           end
-          MMVelo{i}(k,j) = SampleInBinVelo((SampleInd+k-1),j); % use all velo data  % CADATA.MMVelo{i}(k,j) = CADATA.SampleInBinVelo((SampleInd+k-1),j); 
+          MMVelo{i}(k,j) = SampleInBinVelo((SampleInd+k-1),j); % use all velo data   
       end
       sData.imdata.VeloLimInBin(i,j) = nanmean(MMVeloLim{i}(:,j)); % mean of limited velo
       sData.imdata.VeloInBin(i,j) = nanmean(MMVelo{i}(:,j));  % mean of real velo
    end
 end
 
+if IsDeconv >= 1
+    sData = cumSpikes(sData);
+    sData = ifreqDeconvN(sData);
+end
+
 % CREATE A NEW MATRIX FOR Ca-data WHERE ALL DATA IN A BIN WITHIN A TRIAL IS REPRESENTED BY ONE CELL/NUMBER. CA-DFF DATA WILL BE AVERAGED WITHIN ONE BIN/ONE TRIAL (USING DATAPOINTS WHERE SPEED IS HIGHER THAN SET)
 for i = 1:1:nROIs
     sData.imdata.binned.RoidFF{i} = NaN(nTrials,nBin); 
-    %sData.imdata.binned.RoidFF_SR{i} = NaN(nTrials,nBin);
-    %sData.imdata.binned.RoidFF_SR_LP{i} = NaN(nTrials,nBin);
     if IsDeconv >= 1
-    sData.imdata.binned.RoiDeconvolved{i} = NaN(nTrials,nBin);
-    sData.imdata.binned.RoiSpikeRate{i} = NaN(nTrials,nBin); 
-    %sData.imdata.binned.RoiDenoised{i} = NaN(nTrials,nBin); 
-    %sData.imdata.binned.RoiDenoised_smoothed{i} = NaN(nTrials,nBin); 
-    sData.imdata.binned.iFrequencyNorm{i} = NaN(nTrials,nBin);
+        sData.imdata.binned.RoiDeconvolved{i} = NaN(nTrials,nBin);
+        sData.imdata.binned.RoicumSpikes{i} = NaN(nTrials,nBin); 
+        sData.imdata.binned.RoiiFreq{i} = NaN(nTrials,nBin); 
     end
 end
  % load matrices with data in trial and bins
@@ -223,47 +204,38 @@ for i = 1:1:nROIs
                break 
             end
             SpentInBin = sData.behavior.binning.leaveBinIndex(j,k) - sData.behavior.binning.enterIntoBinIndex(j,k) + 1; % get how many samples spent in that bin
+            if  SpentInBin == 0    % if animal runs too fast and one datapoint has to be used for two bins 
+                SpentInBin = 1;
+            end
             dFFInBin = NaN(MaxSamplesinBin,1); % temporary array to calcuate mean Ca-value in a bin during time spent in a bin (> velo lim)
-            %dFFSRInBin = NaN(MaxSamplesinBin,1);
-            %dFFSRLPInBin = NaN(MaxSamplesinBin,1);
             if IsDeconv >= 1
-            DeconvInBin = NaN(MaxSamplesinBin,1);
-            %DenoisedInBin = NaN(MaxSamplesinBin,1);
-            %SpikeInBin = NaN(MaxSamplesinBin,1);
-            %Denoised_smoothedInBin = NaN(MaxSamplesinBin,1);
-            iFreqInBin = NaN(MaxSamplesinBin,1);
+                DeconvInBin = NaN(MaxSamplesinBin,1);
+                iFreqInBin = NaN(MaxSamplesinBin,1);
+                SpikeInBin = NaN(MaxSamplesinBin,1);
             end
             for m = 1:1:SpentInBin
                 if SampleInd+m > nSamples % if recording ends in SciScan stop calculation (sometimes not the same size data in SciScan and LV)
                     break
                 end
                 if SampleInBinLim(SampleInd+m-1,k) > 0 % limited values were set to -1, I do not want to contain them
-                  dFFInBin(m) = sData.imdata.roiSignals(2).dff(i,(SampleInd+m-1)); % dFF
-                  %dFFSRInBin(m) = sData.imdata.roiSignals(2).dff_slowRemoved(i,(SampleInd+m-1));
-                  %dFFSRLPInBin(m) = sData.imdata.roiSignals(2).dff_slowRemoved_LP(i,(SampleInd+m-1)); % slow removed and filtered dFF
-                  if IsDeconv >= 1
-                  DeconvInBin(m) = sData.imdata.roiSignals(2).deconv(i,(SampleInd+m-1)); % deconv 
-                  %SpikeInBin(m) = sData.imdata.roiSignals(2).firingRate(i,(SampleInd+m-1)); % spike rate
-                  %DenoisedInBin(m) = sData.imdata.roiSignals(2).denoised(i,(SampleInd+m-1)); % 
-                  %Denoised_smoothedInBin(m) = sData.imdata.roiSignals(2).denoised_smoothed(i,(SampleInd+m-1)); % 
-                  iFreqInBin(m) = sData.imdata.roiSignals(2).iFrequencyNorm(i,(SampleInd+m-1));
-                  end
-               end
+                   dFFInBin(m) = sData.imdata.roiSignals(2).dff(i,(SampleInd+m-1)); % dFF
+                   if IsDeconv >= 1
+                      DeconvInBin(m) = sData.imdata.roiSignals(2).deconv(i,(SampleInd+m-1)); % deconv 
+                      SpikeInBin(m) = sData.imdata.roiSignals(2).cumSpikes(i,(SampleInd+m-1)); % spike rate
+                      iFreqInBin(m) = sData.imdata.roiSignals(2).iFrequency(i,(SampleInd+m-1)); % 
+                   end
+                end
             end
             sData.imdata.binned.RoidFF{i}(j,k) = nanmean(dFFInBin); % mean of Ca data within a bin witihn a trial
-            %sData.imdata.binned.RoidFF_SR{i}(j,k) = nanmean(dFFSRLPInBin); %
-            %sData.imdata.binned.RoidFF_SR_LP{i}(j,k) = nanmean(dFFSRLPInBin); %
             if IsDeconv >= 1
-            sData.imdata.binned.RoiDeconvolved{i}(j,k) = nanmean(DeconvInBin); % mean deconvolved Ca data 
-            %sData.imdata.binned.RoiSpikeRate{i}(j,k) = nanmean(SpikeInBin); % mean spike rate of Ca data 
-            %sData.imdata.binned.RoiDenoised{i}(j,k) = nanmean(DenoisedInBin); % mean spike rate of Ca data 
-            %sData.imdata.binned.RoiDenoised_smoothed{i}(j,k) = nanmean(Denoised_smoothedInBin); % mean spike rate of Ca data 
-            sData.imdata.binned.iFrequencyNorm{i}(j,k) = nanmean(iFreqInBin); 
+                sData.imdata.binned.RoiDeconvolved{i}(j,k) = nanmean(DeconvInBin); % mean deconvolved Ca data 
+                sData.imdata.binned.RoicumSpikes{i}(j,k) = nanmean(SpikeInBin); % mean spike rate of Ca data 
+                sData.imdata.binned.RoiiFreq{i}(j,k) = nanmean(iFreqInBin);
             end
         end
     end
 end
-
+%{
 % calculate ROIstats
 roiStat = getRoiActivityStats(sData,2); % using channel 2
 roiStat.meanPeakDff = nanmean(roiStat.peakDff);
@@ -273,12 +245,13 @@ roiStat.stdSsignalToNoise = nanstd(roiStat.signalToNoise);
 roiStat.meanActivityLevel = nanmean(roiStat.activityLevel);
 roiStat.stdActivityLevel = nanstd(roiStat.activityLevel);
 sData.imdata.roiStat = roiStat;
-
+%}
 % save temp
 save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.fileID,'_sData.mat')),'sData');
 
 % calculate and plot motion correction vectors for each bin
-sData = motionCorrVector(sData,filePath,savePath);
+savePath = strcat(sData.sessionInfo.savePath,'\Imaging'); 
+%sData = motionCorrVector(sData,filePath,savePath);
 
 % PLOT HEATMAP of dff data in bins, plotHeatBinCa(data,fileID,roi,ylab,BinSize) 
 % cue positions: %{
@@ -306,10 +279,10 @@ C3A = 88; C3B = 96;
 C4A = 119; C4B = 129;
 elseif gol == 5
 % cue setting: sandpaper, hot glue, hot glue, sandpaper
-C1A = 26; C1B = 26;
-C2A = 46; C2B = 46;
-C3A = 66; C3B = 66;
-C4A = 86; C4B = 86;
+C1A = 26; C1B = 28;
+C2A = 46; C2B = 48;
+C3A = 66; C3B = 68;
+C4A = 86; C4B = 88;
 elseif gol == 10
 %no cues
 C1A = 0; C1B = 0;
@@ -336,17 +309,18 @@ nROIs = sData.imdata.nROIs;
 
 roiStart = 1;
 roiEnd = nROIs;
-% dF/F RoiActBinned
 FigVisible = 'off';
-savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiActBinned'); % '\Imaging\RoiActBinned_SRLP'
+
+% plot binned dF/F 
+%savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiActBinned-dFF'); 
 MeanRoiAct = NaN(nROIs,nBins);
 for roi = roiStart:1:roiEnd %roiStart
     MeanRoiAct(roi,1:nBins)= nanmean(sData.imdata.binned.RoidFF{roi},1);
 
+%{
     if(any(isnan(MeanRoiAct(roi,1:nBins))))
        continue 
     end
-    % sData.imdata.binned.RoidFF_SR_LP
     plotHeatBinCa(sData.imdata.binned.RoidFF{roi},sData.sessionInfo.fileID,roi,'dF/F',sData.behavior.meta.binSize,sData.behavior.meta.nBins,nTrials,FigVisible); %plotHeatBinCa(data,fileID,roi,ylab,BinSize,nTrials,figure visibility)
     caxis([0 inf]); hold on;
     line([C1A C1A],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on;
@@ -359,9 +333,8 @@ for roi = roiStart:1:roiEnd %roiStart
   
     figure('Color','white','visible',FigVisible'); % 'visible','off'
     Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
-    % sData.imdata.binned.RoidFF_SR_LP
     MeanRoiAct(roi,1:nBins)= nanmean(sData.imdata.binned.RoidFF{roi},1);
-    Ymax = (max(MeanRoiAct(roi,:)))*1.1;
+    Ymax = (max(MeanRoiAct(roi,:)))*1.1+0.0001;
     plot(Xaxis,MeanRoiAct(roi,1:nBins),'LineWidth',2)
     line([C1A C1A],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
     line([C2A C2A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
@@ -371,16 +344,17 @@ for roi = roiStart:1:roiEnd %roiStart
     title(strcat(sData.sessionInfo.fileID,' ROI #',num2str(roi)));
     xlabel('Position on Wheel (cm)'); ax = gca; ax.TickDir = 'out'; xticks([0,50,100,150]);
     ylabel('Position tuning of activity');
-    fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-pos-tuning');
+    fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-pos-tuning-dff');
     savefig(fullfile(savePath,fname));
     saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
     %}
 end
-close all;
+% close all;
 sData.imdata.binned.MeanRoiAct = MeanRoiAct;
 
-%%% PLot Mean position tuning of all ROIs
-%savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiAct');
+%{
+% mean signal RoiActBinned
+savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiAct');
 figure('Color','white');
 Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
 sData.imdata.binned.MeanMeanRoiAct = nanmean(sData.imdata.binned.MeanRoiAct);
@@ -395,21 +369,129 @@ axis([0 160 Ymin Ymax]); % ceil(Ymax)
 title(strcat(sData.sessionInfo.fileID,' Mean of all ROIs'));
 xlabel('Position on Wheel (cm)'); ax = gca; ax.TickDir = 'out'; xticks([0,50,100,150]);
 ylabel('Position tuning of activity');
-fname = strcat(sData.sessionInfo.fileID,'AllRois-pos-tuning');
+fname = strcat(sData.sessionInfo.fileID,'AllRois-pos-tuning-dff');
 savefig(fullfile(savePath,fname));
 saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+%}
 
-%%%%
-%{
-%%% plot firing rate (based on deconvolved signal iFreq)
-if IsDeconv >= 1
-    FigVisible = 'on';
-    mkdir(strcat(sData.sessionInfo.savePath,'\Imaging'),'RoiActBinned-iFreq');
-    savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiActBinned-iFreq'); 
-    MeanRoiActiFreq = NaN(nROIs,nBins);
+
+if IsDeconv > 0
+    %%% binned deconvolved signal
+    % savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiActBinned-deconv'); 
+    MeanRoiAct = NaN(nROIs,nBins);
     for roi = roiStart:1:roiEnd
-        MeanRoiActiFreq(roi,1:nBins)= nanmean(sData.imdata.binned.iFrequencyNorm{roi},1);
-        plotHeatBinCa(sData.imdata.binned.iFrequencyNorm{roi},sData.sessionInfo.fileID,roi,'activity',sData.behavior.meta.binSize,sData.behavior.meta.nBins,nTrials,FigVisible); %plotHeatBinCa(data,fileID,roi,ylab,BinSize,nTrials,figure visibility)
+        MeanRoiAct(roi,1:nBins)= nanmean(sData.imdata.binned.RoiDeconvolved{roi},1);
+    %{
+        plotHeatBinCa(sData.imdata.binned.RoiDeconvolved{roi},sData.sessionInfo.fileID,roi,'deconv',sData.behavior.meta.binSize,sData.behavior.meta.nBins,nTrials,FigVisible); %plotHeatBinCa(data,fileID,roi,ylab,BinSize,nTrials,figure visibility)
+        caxis([0 inf]); hold on;
+        line([C1A C1A],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on;
+        line([C2A C2A],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C3A C3A],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C4A C4A],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on; line([C4B C4B],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on;
+        fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-deconv');
+        savefig(fullfile(savePath,fname));
+        saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+
+        figure('Color','white','visible',FigVisible')
+        Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
+        Ymax = (max(MeanRoiAct(roi,:)))+0.0001;
+        plot(Xaxis,MeanRoiAct(roi,1:nBins),'LineWidth',2)
+        line([C1A C1A],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+        line([C2A C2A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C3A C3A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C4A C4A],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C4B C4B],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+        axis([0 160 0 Ymax]); % ceil(Ymax)
+        title(strcat(sData.sessionInfo.fileID,' ROI #',num2str(roi)));
+        xlabel('Position on Wheel (cm)'); ax = gca; ax.TickDir = 'out'; xticks([0,50,100,150]);
+        ylabel('Position tuning of activity');
+        fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-pos-tuning-deconv');
+        savefig(fullfile(savePath,fname));
+        saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+        %}
+    end
+    % close all;
+    sData.imdata.binned.MeanRoiAct_Deconv = MeanRoiAct;
+    %{
+    % mean pos tuning - deconv - NOT smoothed
+    figure();
+    Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
+    Ymax = (max(mean(MeanRoiAct)))*1.1+0.0001;
+    Ymin = (min(mean(MeanRoiAct)))*0.9;
+    plot(Xaxis,mean(MeanRoiAct),'LineWidth',2)
+    line([C1A C1A],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+    line([C2A C2A],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+    line([C3A C3A],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+    line([C4A C4A],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C4B C4B],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+    axis([0 160 Ymin Ymax]); % ceil(Ymax)
+    title(strcat(sData.sessionInfo.fileID,' Mean of all ROIs - deconv'));
+    xlabel('Position on Wheel (cm)'); ax = gca; ax.TickDir = 'out'; xticks([0,50,100,150]);
+    ylabel('Position tuning of activity');
+    fname = strcat(sData.sessionInfo.fileID,'AllRois-pos-tuning-deconv');
+    savefig(fullfile(savePath,fname));
+    saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+   %}
+    %%% binned cumulative spiking rate 
+    % savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiActBinned-cumSpikes'); 
+    MeanRoiAct = NaN(nROIs,nBins);
+    for roi = roiStart:1:roiEnd
+        MeanRoiAct(roi,1:nBins)= nanmean(sData.imdata.binned.RoicumSpikes{roi},1);
+    %{
+        plotHeatBinCa(sData.imdata.binned.RoicumSpikes{roi},sData.sessionInfo.fileID,roi,'cumSpikes',sData.behavior.meta.binSize,sData.behavior.meta.nBins,nTrials,FigVisible); %plotHeatBinCa(data,fileID,roi,ylab,BinSize,nTrials,figure visibility)
+        caxis([0 inf]); hold on;
+        line([C1A C1A],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on;
+        line([C2A C2A],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C3A C3A],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C4A C4A],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on; line([C4B C4B],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on;
+        fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-cumSpikes');
+        savefig(fullfile(savePath,fname));
+        saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+
+        figure('Color','white','visible',FigVisible')
+        Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
+        Ymax = (max(MeanRoiAct(roi,:)))+0.0001;
+        plot(Xaxis,MeanRoiAct(roi,1:nBins),'LineWidth',2)
+        line([C1A C1A],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+        line([C2A C2A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C3A C3A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+        line([C4A C4A],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C4B C4B],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+        axis([0 160 0 Ymax]); % ceil(Ymax)
+        title(strcat(sData.sessionInfo.fileID,' ROI #',num2str(roi)));
+        xlabel('Position on Wheel (cm)'); ax = gca; ax.TickDir = 'out'; xticks([0,50,100,150]);
+        ylabel('Position tuning of activity');
+        fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-pos-tuning-cumSpikes');
+        savefig(fullfile(savePath,fname));
+        saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+        %}
+    end
+    % close all;
+    sData.imdata.binned.MeanRoiAct_cumSpikes = MeanRoiAct;
+    %{
+    % mean pos tuning - cumSpikes
+    figure();
+    Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
+    Ymax = (max(mean(MeanRoiAct)))*1.1+0.0001;
+    Ymin = (min(mean(MeanRoiAct)))*0.9;
+    plot(Xaxis,mean(MeanRoiAct),'LineWidth',2)
+    line([C1A C1A],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+    line([C2A C2A],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+    line([C3A C3A],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
+    line([C4A C4A],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C4B C4B],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
+    axis([0 160 Ymin Ymax]); % ceil(Ymax)
+    title(strcat(sData.sessionInfo.fileID,' Mean of all ROIs - cumSpikes'));
+    xlabel('Position on Wheel (cm)'); ax = gca; ax.TickDir = 'out'; xticks([0,50,100,150]);
+    ylabel('Position tuning of activity');
+    fname = strcat(sData.sessionInfo.fileID,'AllRois-pos-tuning-cumSpikes');
+    savefig(fullfile(savePath,fname));
+    saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
+    %}
+    
+    %%% binned instantenous frequency
+    % savePath = strcat(sData.sessionInfo.savePath,'\Imaging\RoiActBinned-iFreq'); 
+    MeanRoiAct = NaN(nROIs,nBins);
+    for roi = roiStart:1:roiEnd
+        MeanRoiAct(roi,1:nBins)= nanmean(sData.imdata.binned.RoiiFreq{roi},1);
+    %{
+        plotHeatBinCa(sData.imdata.binned.RoiiFreq{roi},sData.sessionInfo.fileID,roi,'iFreq',sData.behavior.meta.binSize,sData.behavior.meta.nBins,nTrials,FigVisible); %plotHeatBinCa(data,fileID,roi,ylab,BinSize,nTrials,figure visibility)
         caxis([0 inf]); hold on;
         line([C1A C1A],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 nTrials],'Color','white','LineStyle','--','LineWidth',2); hold on;
         line([C2A C2A],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 nTrials],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
@@ -421,8 +503,8 @@ if IsDeconv >= 1
 
         figure('Color','white','visible',FigVisible')
         Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
-        Ymax = (max(MeanRoiActiFreq(roi,:)))+0.0001;
-        plot(Xaxis,MeanRoiActiFreq(roi,1:nBins),'LineWidth',2)
+        Ymax = max(MeanRoiAct(roi,:))+0.0001;
+        plot(Xaxis,MeanRoiAct(roi,1:nBins),'LineWidth',2)
         line([C1A C1A],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[0 Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
         line([C2A C2A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
         line([C3A C3A],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[0 Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
@@ -434,17 +516,17 @@ if IsDeconv >= 1
         fname = strcat(sData.sessionInfo.fileID,'-roi',num2str(roi),'-pos-tuning-iFreq');
         savefig(fullfile(savePath,fname));
         saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
-        
+        %}
     end
-    close all;
-    sData.imdata.binned.MeanRoiAct_iFreq = MeanRoiActiFreq;
-    
+    % close all;
+    sData.imdata.binned.MeanRoiAct_iFreq = MeanRoiAct;
+    %{
     % mean pos tuning - iFreq
     figure();
     Xaxis = sData.behavior.meta.binSize:sData.behavior.meta.binSize:sData.behavior.meta.binSize*nBins;
-    Ymax = (max(mean(MeanRoiActiFreq)))*1.1;
-    Ymin = (min(mean(MeanRoiActiFreq)))*0.9;
-    plot(Xaxis,mean(MeanRoiActiFreq),'LineWidth',2)
+    Ymax = (max(mean(MeanRoiAct)))*1.1+0.0001;
+    Ymin = (min(mean(MeanRoiAct)))*0.9;
+    plot(Xaxis,mean(MeanRoiAct),'LineWidth',2)
     line([C1A C1A],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on; line([C1B C1B],[Ymin Ymax],'Color','black','LineStyle','--','LineWidth',2); hold on;
     line([C2A C2A],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C2B C2B],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
     line([C3A C3A],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on; line([C3B C3B],[Ymin Ymax],'Color',[1 0.3 0.5],'LineStyle','--','LineWidth',2); hold on;
@@ -456,16 +538,12 @@ if IsDeconv >= 1
     fname = strcat(sData.sessionInfo.fileID,'AllRois-pos-tuning-iFreq');
     savefig(fullfile(savePath,fname));
     saveas(gcf,(fullfile(savePath,[fname '.jpg'])));
-    
+    %}   
 end
-%}
+
+
 % Save file to same path where other files can be found 
 save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.fileID,'_sData.mat')),'sData');
 
 end
 
-%{
-A = max(sData.imdata.binned.MeanRoiAct,[],2);
-B = sData.imdata.binned.MeanRoiAct./A;
-plot(mean(B))
-%}

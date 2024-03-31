@@ -1,33 +1,74 @@
-function sData = CalcBehavAC(sData,BinNu,IsOpto,SensitivityOpto) 
-
+function sData = CalcBehavOldMicheleConvert(BinNu) 
+% convert Michele's old TDMSDATA to sData
 % calculate LV data from TDMS data and save it to LVDATA file. From 2018.11.19. calculate lapstart when Water Valve opens (photodiode signal is not reliable)
 % before this file use : sData.daqdata = loadTDMSdataNoriMateLV;
 
-%%% SET PARAMETERS:
-% BinNu = 60; % Bin number ; I calculated with 60 bins in all recordings
-% IsOpto = 0; % 0 or 1; Is this session an optically stimulated? ; These recording are NOT optically stimulated
-% SensitivityOpto = 0; % between 0 - 100; Detection sensitivity for the optical stimulation. Since these recordings are not stimulated, it does not matter what is the value 
+savePath = 'C:\MATLAB\SAVE';
 
-LVDATA = struct; % temporary struct for data
+msgbox('Choose converted Michele TDMSDATA.mat file');
+[fileName,filePath,~] = uigetfile('*.mat','','C:\' );
+load(fullfile(filePath,fileName));
+
+parts1 = strsplit(fileName,'.'); 
+parts2 = strsplit(parts1{1},'-');
+if all(parts2{3} == 'NL2')
+    mouseID = 8007;
+elseif all(parts2{3} == 'NL3')
+    mouseID = 8008;
+elseif all(parts2{3} == 'NL6')
+    mouseID = 8009;
+elseif all(parts2{3} == 'NL8')
+    mouseID = 8010;
+end
+
+sData.sessionInfo = struct;
+sData.sessionInfo.sessionID = strcat('m',num2str(mouseID),'-',parts2{2},'-',parts2{4});
+sData.sessionInfo.fileID = sData.sessionInfo.sessionID;
+sData.sessionInfo.recordedData = {'2P'};
+
+%%% MOUSEINFO
+mouseFolder = 'C:\MATLAB\MOUSEINFO';
+if isfile([mouseFolder '\mouseInfo-' sData.sessionInfo.sessionID(2:5) '.mat'])
+load([mouseFolder '\mouseInfo-' sData.sessionInfo.sessionID(2:5)]);
+else
+    msgbox(['1) Make sure if "mouseFolder" variable is defined in the script and refers to the path where the mouseinfo files are stored.',char(10),char(10),... 
+        '2) Make sure if the mouse info file for this mouse is filled in manually and saved according to the mouse naming standards.'],'Mouseinfo data is not found.');
+    return
+end
+sData.mouseInfo = mouseInfo;
+clear('mouseInfo');
+
+%%% DAQDATA
+sData.daqdata = struct();
+sData.daqdata.lickSignal = TDMSDATA.Licksignal;     % double    Lick signal                       
+sData.daqdata.wheelDiode = TDMSDATA.photodiodesignal;     % double    Photodiode signal used to signify absolute position of wheel
+sData.daqdata.waterValve = TDMSDATA.watervalve;      % double    Water valve signal showing when the water valve is open
+sData.daqdata.frameSignal = TDMSDATA.framesignal;   % double    Frame signal recorded from the microscope
+sData.daqdata.frameIndex = find(diff(TDMSDATA.framesignal))==1;         % double    Array of same lenght as frames required, where each sample n is the index number of other daqdata samples at the onset of frame n.
+sData.daqdata.wheelRotaryEncoderSignal = TDMSDATA.AngularPosition;
+% DAQ Metadata
+sData.daqdata.meta.fs = 1/TDMSDATA.dt;                           % double    (REQUIRED) Sampling frequency (Hz) of the data acquisition system
+sData.daqdata.meta.wheelRotaryEncoderTicks = 2000;      % double    (REQUIRED, if rotary encoder wheel is used) Number of ticks on the rotary encoder wheel used
+sData.daqdata.notes = 'Inverted photodiode signal (0 at lapstart).';
+sData.daqdata.distanceCm = TDMSDATA.AngularPosition / sData.daqdata.meta.wheelRotaryEncoderTicks * (pi*50);
+
+%%% saving sData
+mkdir(savePath,sData.sessionInfo.sessionID);
+sData.sessionInfo.savePath = strcat(savePath,'\',sData.sessionInfo.sessionID);
+save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.sessionID,'_sData.mat')),'sData');
+
+%%% LVDATA ccalculation
+LVDATA = struct;
 LVDATA.stats = struct;
 LVDATA.BinNu = BinNu;
 LVDATA.BinSize = 50*pi/BinNu;
 %LVDATA.BinNu = ceil(50*pi/BinSize); % Bin Number,  circumference is 50*pi
-
-% fileID
-LVDATA.FileID = sData.sessionInfo.fileID;
-
+LVDATA.FileID = sData.sessionInfo.sessionID;
 
 % Calculate Trial number (TRNu) and RewardStart array (array of zeros and ones, one when lap starts)
-% Note: having 3 khz sampling, if the mouse run 100 cm/s, the photodiode signal (2cm black part) takes 20 ms, it is 60 samples. 
-PhotoDiode = sData.daqdata.wheelDiode; % original analog data from tdms file
-if any(PhotoDiode(:) > 2.0)
-    PhotoDiode(PhotoDiode < 1.5) = 0; % binarized to zeros and ones
-    PhotoDiode(PhotoDiode >= 1.5) = 1;
-    PdZeroOne = diff(PhotoDiode) == 1; % search when PD signal change from zero to one - potential lap starts (and arteficial back-and-forth as well)
-else
-    PdZeroOne = PhotoDiode;
-end
+% Note: having 100??? hz sampling
+% original analog data from tdms file: 0 if animal reach lapstart, 1 if running on wheel 
+PdZeroOne = diff(TDMSDATA.photodiodesignal) == -1; % search when PD signal change from zero to one - potential lap starts (and arteficial back-and-forth as well)
 PotRewardStartIndex = find(PdZeroOne); % potential lap starts
 RewardStartIndexPre = NaN(numel(PotRewardStartIndex),1); % real lap-starts
 LapCounter = 0;
@@ -41,10 +82,9 @@ LVDATA.RewardStartIndex = RewardStartIndexPre(~isnan(RewardStartIndexPre));
 LVDATA.stats.TRNuFull = LapCounter;
 LVDATA.TRNu = LapCounter;
 
-
 %{
 % LapStart at WaterGiven
-LVDATA.RewardStartIndex = find(diff(sData.daqdata.waterValve) == 1);
+LVDATA.RewardStartIndex = diff(sData.daqdata.waterValve) == 1;
 LVDATA.TRNu = sum(LVDATA.RewardStartIndex)-2;
 LVDATA.stats.TRNuFull = LVDATA.TRNu;
 %}
@@ -75,8 +115,8 @@ LVDATA.FrameSignalRate = 1/((mean(diff(FrameStartIndex)))/LVDATA.DaqSamplingRate
 % cut LV recording before first reward and frame signals
 Distance = sData.daqdata.distanceCm;
 %Distance(1:FrameStartIndex(1)-1) = NaN;
-LVDATA.Start = min(LVDATA.RewardStartIndex(LVDATA.RewardStartIndex > FrameStartIndex(1)));
-Distance(1:LVDATA.Start-1) = NaN;
+Start = min(LVDATA.RewardStartIndex(LVDATA.RewardStartIndex > FrameStartIndex(1)));
+Distance(1:Start-1) = NaN;
 
 % Aim: Calculate Absolute Distance (zero at reward point) from cumulative distance data, downsaple to imaging sampling rate, FrameSignalRate
 % Calculate when rewards start, 
@@ -114,7 +154,7 @@ end
 
 
 % Velocity calculation
-Circumfer = 157; %pi*50; % Wheel circumference
+Circumfer = pi*50; % Wheel circumference
 LVDATA.stats.TheoreticLapLengthCm = Circumfer;
 MovMean = 7 ; % moving window for smoothing
 %%% calculation nonDS Velocity data
@@ -276,10 +316,6 @@ savefig(fullfile(savePath,FileName));
 saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
 
-
-% TRIAL SORTING 
-%LVDATA = OptoTrialSorting(LVDATA,TDMSDATA);
-
 %%% Plot stttings
 RewardZoneLength = 6 ; % cm
 PlusBins = 10;
@@ -287,175 +323,31 @@ Xstep = LVDATA.BinSize;
 XaxisEnd = (BinNu+PlusBins) * LVDATA.BinSize;
 TRNu = LVDATA.TRNu;
 LickMax = 1.2*(max(LVDATA.MeanLickCm));
-VMax = 1.2*(max(LVDATA.MeanVeloBin));
 
 
-if IsOpto == 0
-    %%% PLOT average lick / trials
-    figure('Color','white'); 
-    Xaxis = 1:Xstep:XaxisEnd;
-    plot(Xaxis,LVDATA.MeanLickCm); hold on
-    line([157 157],[0 LickMax],'Color','black','LineStyle','--'); hold on   %LickMax
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 LickMax],'Color','black','LineStyle','--');
-    xlabel('Position on wheel (cm)');
-    ylabel('Licks/cm');
-    FileName = strcat('LickSum-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));  
-    
-    %%% PLOT average of trials speed
-    figure('Color','white'); 
-    Xaxis = 1:Xstep:XaxisEnd;
-    plot(Xaxis,LVDATA.MeanVeloBin); hold on
-    line([157 157],[0 VMax],'Color','black','LineStyle','--'); hold on   %LickMax
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 VMax],'Color','black','LineStyle','--');
-    xlabel('Position on wheel (cm)');
-    ylabel('Velocity (cm/s)');
-    FileName = strcat('VeloSum-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-    
-    if sum(sData.daqdata.optoSignal)>0
-        LVDATA = optoStimCalc(LVDATA,sData);
-        sData.behavior.opto.IsOptoSession = 2;
-    end
+%%% PLOT average lick / trials
+figure('Color','white'); 
+axis = 1:Xstep:XaxisEnd;
+plot(axis,LVDATA.MeanLickCm); hold on
+line([157 157],[0 LickMax],'Color','black','LineStyle','--'); hold on   %LickMax
+line([157+RewardZoneLength 157+RewardZoneLength],[0 LickMax],'Color','black','LineStyle','--');
+xlabel('Position on wheel (cm)');
+ylabel('Licks/cm');
+FileName = strcat('LickSum-',LVDATA.FileID);
+savefig(fullfile(savePath,FileName));
+saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));  
+
+%%% PLOT average of trials speed
+figure('Color','white'); 
+axis = 1:Xstep:BinNu * LVDATA.BinSize;
+plot(axis,LVDATA.MeanVeloBin(1:BinNu)); 
+xlabel('Position on wheel (cm)');
+ylabel('Velocity (cm/s)');
+FileName = strcat('VeloSum-',LVDATA.FileID);
+savefig(fullfile(savePath,FileName));
+saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
    
-elseif IsOpto == 1 
 
-    % TRIAL SORTING 
-    LVDATA = OptoTrialSorting2(LVDATA,sData,SensitivityOpto);
-    %SensitivityOpto = 100; %% If there was light in the (1/SensitivityOpto)percentage during the trial it should be considered as light-on trial. 1/100 high sens, 1/10 low
-    
-    %%% PLOT average lick trial-types
-    figure('Color','white'); 
-    Xaxis = 1:Xstep:XaxisEnd;
-    plot(Xaxis,LVDATA.Opto.MeanLick_LightOff); hold on;
-    plot(Xaxis,LVDATA.Opto.MeanLick_LightOn); hold on;
-    plot(Xaxis,LVDATA.Opto.MeanLick_LightAfter); hold on;
-    line([157 157],[0 LickMax],'Color','black','LineStyle','--');
-    hold on
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 1.5],'Color','black','LineStyle','--');
-    xlabel('Position on wheel (cm)');
-    ylabel('Licks/cm');
-    legend('Laser-Off','Laser-On','After-Laser','Location','north');
-    FileName = strcat('LickSum-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-    %%% PLOT Lick Heatmaps
-    % LIGHT-OFF
-    plotdata = LVDATA.Opto.LickMatrix_LightOff;
-    TRNuPlot = size(plotdata,1);
-    figure('Color','white'); 
-    imagesc(1:Xstep:XaxisEnd,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
-    j = colorbar; colormap(jet); caxis([0 5]);
-    j.Label.String = 'Licking (licks/cm)'; 
-    j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    line([157 157],[0 TRNuPlot],'Color','white','LineStyle','--');
-    hold on
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
-    xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-Off'));
-    FileName = strcat('LickHeat-LaserOff-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-    % LIGHT-ON
-    plotdata = LVDATA.Opto.LickMatrix_LightOn;
-    TRNuPlot = size(plotdata,1);
-    figure('Color','white'); 
-    imagesc(1:Xstep:XaxisEnd,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
-    j = colorbar; colormap(jet); caxis([0 5]);
-    j.Label.String = 'Licking (licks/cm)'; 
-    j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    line([157 157],[0 TRNuPlot],'Color','white','LineStyle','--');
-    hold on
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
-    xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-On'));
-    FileName = strcat('LickHeat-LaserOn-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-    % AFTER-LIGHT
-    plotdata = LVDATA.Opto.LickMatrix_AfterLight;
-    TRNuPlot = size(plotdata,1);
-    figure('Color','white'); 
-    imagesc(1:Xstep:XaxisEnd,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
-    j = colorbar; colormap(jet); caxis([0 5]);
-    j.Label.String = 'Licking (licks/cm)'; 
-    j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    line([157 157],[0 TRNuPlot],'Color','white','LineStyle','--');
-    hold on
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
-    xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-AfterLaser'));
-    FileName = strcat('LickHeat-AfterLaser-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-
-    %%%% SPEED
-
-    %%% PLOT average of trials speed
-    figure('Color','white'); 
-    Xaxis = 1:Xstep:XaxisEnd;
-    plot(Xaxis,LVDATA.Opto.MeanVelo_LightOff); hold on;
-    plot(Xaxis,LVDATA.Opto.MeanVelo_LightOn); hold on;
-    plot(Xaxis,LVDATA.Opto.MeanVelo_LightAfter); hold on;
-    line([157 157],[0 VMax],'Color','black','LineStyle','--'); hold on   %LickMax
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 VMax],'Color','black','LineStyle','--');
-    xlabel('Position on wheel (cm)');
-    ylabel('Velocity (cm/s)');
-    legend('Laser-Off','Laser-On','After Laser','Location','South');
-    FileName = strcat('VeloSum-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-    %%% PLOT Velo Heatmaps
-    % LIGHT-OFF
-    plotdata = LVDATA.Opto.VeloMatrix_LightOff(:,1:BinNu);
-    TRNuPlot = size(plotdata,1);
-    figure('Color','white'); 
-    imagesc(1:Xstep:BinNu * LVDATA.BinSize,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
-    j = colorbar; colormap(jet); caxis([0 40]);
-    j.Label.String = 'Velocity (cm/s)'; 
-    j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-Off'));
-    FileName = strcat('VeloHeat-LaserOff-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-    % LIGHT-ON
-    plotdata = LVDATA.Opto.VeloMatrix_LightOn(:,1:BinNu);
-    TRNuPlot = size(plotdata,1);
-    figure('Color','white'); 
-    imagesc(1:Xstep:BinNu * LVDATA.BinSize,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
-    j = colorbar; colormap(jet); caxis([0 40]);
-    j.Label.String = 'Velocity (cm/s)'; 
-    j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-Laser-On'));
-    FileName = strcat('VeloHeat-LaserOn-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-    % AFTER-LIGHT
-    plotdata = LVDATA.Opto.VeloMatrix_AfterLight(:,1:BinNu);
-    TRNuPlot = size(plotdata,1);
-    figure('Color','white'); 
-    imagesc(1:Xstep:BinNu * LVDATA.BinSize,1:TRNuPlot,(plotdata)) %(1:number of bins;1:number of trials)   imagesc(1:CR,1:(TR-1),(BinLick))
-    j = colorbar; colormap(jet); caxis([0 40]);
-    j.Label.String = 'Velocity (cm/s)'; 
-    j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    xlabel('Position on wheel (cm)'); ylabel('Trials');
-    title(strcat(LVDATA.FileID,'-AfterLaser'));
-    FileName = strcat('VeloHeat-AfterLaser-',LVDATA.FileID);
-    savefig(fullfile(savePath,FileName));
-    saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
-
-end
     
 %%%% write data into sData
 sData.behavior.wheelPos = AbsDist;                   % double    Absolute position on the wheel
@@ -499,16 +391,9 @@ sData.behavior.binning.waterGivenBinned = LVDATA.WaterGivenMatrix;
 sData.behavior.binning.meanVeloBinned = LVDATA.MeanVeloBin;
 sData.behavior.binning.meanLickBinned = LVDATA.MeanLickBin;
 sData.behavior.binning.meanLickPerCmBinned = LVDATA.MeanLickCm;
-%Optical stimulation
-sData.behavior.opto = LVDATA.Opto;
-sData.behavior.opto.IsOptoSession = IsOpto;
 
-% calculate behavioral performnace
-if LVDATA.TRNu > 30
-    sData = behavPerfomance(sData);
-end
 
 % Save file to same path where LV files can be found 
-save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.fileID,'_sData.mat')),'sData');
+save(fullfile(sData.sessionInfo.savePath,strcat(sData.sessionInfo.sessionID,'_sData.mat')),'sData');
 
 end

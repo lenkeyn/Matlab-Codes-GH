@@ -1,14 +1,9 @@
-function sData = CalcBehavAC(sData,BinNu,IsOpto,SensitivityOpto) 
+function sData = CalcBehav(sData,BinNu,IsOpto,Sensitivity) 
 
 % calculate LV data from TDMS data and save it to LVDATA file. From 2018.11.19. calculate lapstart when Water Valve opens (photodiode signal is not reliable)
 % before this file use : sData.daqdata = loadTDMSdataNoriMateLV;
 
-%%% SET PARAMETERS:
-% BinNu = 60; % Bin number ; I calculated with 60 bins in all recordings
-% IsOpto = 0; % 0 or 1; Is this session an optically stimulated? ; These recording are NOT optically stimulated
-% SensitivityOpto = 0; % between 0 - 100; Detection sensitivity for the optical stimulation. Since these recordings are not stimulated, it does not matter what is the value 
-
-LVDATA = struct; % temporary struct for data
+LVDATA = struct;
 LVDATA.stats = struct;
 LVDATA.BinNu = BinNu;
 LVDATA.BinSize = 50*pi/BinNu;
@@ -253,6 +248,7 @@ LVDATA.SampleSpentInBinPlusBins(1:HeightPlus10Bin,LVDATA.BinNu+1:LVDATA.BinNu+10
 LVDATA.TRNu = sum(LVDATA.EnterIntoBinSampleInd(:,1)>0);
 
 % save behavior plots into BEHAVIOR subfolder
+
 mkdir(sData.sessionInfo.savePath,'Behavior');
 savePath = strcat(sData.sessionInfo.savePath,'\Behavior');
 
@@ -263,14 +259,14 @@ savefig(fullfile(savePath,FileName));
 saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
 % plot HeatBinLicks plot
-[LVDATA.LickBinMatrix, LVDATA.MeanLickBin,LVDATA.LickCmMatrix,LVDATA.MeanLickCm] = plotHeatBinLicksPlusBin(LVDATA,LVDATA.BinNu+10); 
+[LVDATA.LickBinMatrix, LVDATA.MeanLickBin,LVDATA.LickCmMatrix,LVDATA.MeanLickCm] = plotHeatBinLicksPlusBin(LVDATA,LVDATA.BinNu); 
 FileName = strcat('LickHeatBin-',LVDATA.FileID);
 savefig(fullfile(savePath,FileName));
 saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 
 % plot WaterGiven plot / hit-miss visible
 SizeOfRewardZoneCm = 6;
-[LVDATA.WaterGivenMatrix,LVDATA.Opto.HitTrialsArray,LVDATA.Opto.HitRate] = plotHeatBinWaterGivenPlusBin(LVDATA,LVDATA.BinNu+10,SizeOfRewardZoneCm);
+[LVDATA.WaterGivenMatrix,LVDATA.Opto.HitTrialsArray,LVDATA.Opto.HitRate] = plotHeatBinWaterGivenPlusBin(LVDATA,LVDATA.BinNu,SizeOfRewardZoneCm);
 FileName = strcat('WaterGivenHeatBin-',LVDATA.FileID);
 savefig(fullfile(savePath,FileName));
 saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
@@ -284,7 +280,7 @@ saveas(gcf,(fullfile(savePath,[FileName '.jpg'])));
 RewardZoneLength = 6 ; % cm
 PlusBins = 10;
 Xstep = LVDATA.BinSize;
-XaxisEnd = (BinNu+PlusBins) * LVDATA.BinSize;
+XaxisEnd = BinNu * LVDATA.BinSize;
 TRNu = LVDATA.TRNu;
 LickMax = 1.2*(max(LVDATA.MeanLickCm));
 VMax = 1.2*(max(LVDATA.MeanVeloBin));
@@ -323,8 +319,8 @@ if IsOpto == 0
 elseif IsOpto == 1 
 
     % TRIAL SORTING 
-    LVDATA = OptoTrialSorting2(LVDATA,sData,SensitivityOpto);
-    %SensitivityOpto = 100; %% If there was light in the (1/SensitivityOpto)percentage during the trial it should be considered as light-on trial. 1/100 high sens, 1/10 low
+    LVDATA = OptoTrialSorting2(LVDATA,sData,Sensitivity);
+    %Sensitivity = 100; %% If there was light in the (1/Sensitivity)percentage during the trial it should be considered as light-on trial. 1/100 high sens, 1/10 low
     
     %%% PLOT average lick trial-types
     figure('Color','white'); 
@@ -332,9 +328,9 @@ elseif IsOpto == 1
     plot(Xaxis,LVDATA.Opto.MeanLick_LightOff); hold on;
     plot(Xaxis,LVDATA.Opto.MeanLick_LightOn); hold on;
     plot(Xaxis,LVDATA.Opto.MeanLick_LightAfter); hold on;
-    line([157 157],[0 LickMax],'Color','black','LineStyle','--');
-    hold on
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 1.5],'Color','black','LineStyle','--');
+    %line([157 157],[0 LickMax],'Color','black','LineStyle','--');
+    %hold on
+    %line([157+RewardZoneLength 157+RewardZoneLength],[0 1.5],'Color','black','LineStyle','--');
     xlabel('Position on wheel (cm)');
     ylabel('Licks/cm');
     legend('Laser-Off','Laser-On','After-Laser','Location','north');
@@ -351,9 +347,9 @@ elseif IsOpto == 1
     j = colorbar; colormap(jet); caxis([0 5]);
     j.Label.String = 'Licking (licks/cm)'; 
     j.Label.FontSize = 11; j.TickDirection = 'out'; 
-    line([157 157],[0 TRNuPlot],'Color','white','LineStyle','--');
-    hold on
-    line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
+    %line([157 157],[0 TRNuPlot],'Color','white','LineStyle','--');
+    %hold on
+    %line([157+RewardZoneLength 157+RewardZoneLength],[0 TRNu],'Color','white','LineStyle','--');
     xlabel('Position on wheel (cm)'); ylabel('Trials');
     title(strcat(LVDATA.FileID,'-Laser-Off'));
     FileName = strcat('LickHeat-LaserOff-',LVDATA.FileID);
@@ -504,8 +500,9 @@ sData.behavior.opto = LVDATA.Opto;
 sData.behavior.opto.IsOptoSession = IsOpto;
 
 % calculate behavioral performnace
-if LVDATA.TRNu > 30
+if LVDATA.TRNu > 20
     sData = behavPerfomance(sData);
+    sData = behavPerfomance2(sData);
 end
 
 % Save file to same path where LV files can be found 
